@@ -2,129 +2,118 @@
 
 **College Canteen Pre-Ordering & Food Demand Management Web Application**
 
-A self-contained, high-performance web app designed for college canteens. Built with pure React and Vite, featuring zero third-party UI kits or backend dependencies. Created to be simple, robust, and crystal-clear for college viva defense and academic demonstration.
+A production-grade, real-time web app for college canteens. Built with **React 18, Vite, and Supabase**. Supports both an offline **demo mode** (LocalStorage, zero backend) and a **live mode** (Supabase — PostgreSQL, Auth, and Realtime).
 
 ---
 
 ## 🌟 Key Features
 
 ### For Students
-- **Visual Dish Menu**: High-contrast, editorial layout with Google Fonts (*Playfair Display* & *DM Sans*), dish descriptions, preparation times, and instant category filters (*Breakfast, Lunch, Snacks, Beverages, Desserts*).
-- **Graceful Network Fallbacks**: Automatically falls back to styled serif initial badges if offline or if images fail to load.
-- **Cart & Tray Review**: Real-time portion tallying, automatic estimated pickup calculation, kitchen notes input, and sold-out dish safety guards.
-- **Single-Click Pre-Ordering**: In-app modal confirmation with double-submit debouncing.
-- **Order Tracking**: Visual 4-stage order stepper (*Placed → Preparing → Ready → Collected*) with prominent token hero banners.
+- **Visual Dish Menu**: High-contrast, editorial layout with category filters and search.
+- **Cart & Tray Review**: Real-time portion tallying, automatic estimated pickup time, kitchen notes.
+- **Secure Pre-Ordering**: Order placed via an atomic RPC — server validates availability and price. Client-supplied prices are never trusted.
+- **Order Tracking**: Visual 4-stage timeline (*Placed → Preparing → Ready → Collected*) with token hero banners. Updated in real time.
 
 ### For Staff & Kitchen Counter
-- **Kitchen Counter Queue**: Live pre-order cards sorted by urgency, real-time status filter chips with order counts, and single-click linear stage progression (*Mark Preparing → Mark Ready → Mark Collected*).
-- **History Accordion**: Instant log of completed and expired orders with exact timestamps.
-- **Menu Management**: In-line category grouping, instant availability toggle switches, and an inline-validated modal to add or edit dishes (price bounds, prep times, name uniqueness).
+- **Kitchen Queue**: Live pre-order cards updated in real time across all devices. Status filter chips, token search.
+- **Status Lifecycle**: Single-click linear progression (*Mark Preparing → Mark Ready → Mark Collected*). Validated server-side.
+- **History Accordion**: Completed and expired orders with exact timestamps.
+- **Menu Management**: Add/edit dishes, toggle availability, soft-delete (preserves history).
 
 ### Demand Management Dashboard
-- **Preparation Target Engine**: Automatically computes live cooking requirements from incoming orders with an adjustable walk-in student buffer rate (0% to 50%, default +10%).
-- **Interactive Visualizations**: Pure CSS horizontal bar charts comparing pre-orders vs recommended batch sizes, plus category demand breakdowns.
-- **Printable Kitchen Prep Sheet**: Built-in printer-friendly styles (`window.print()`) for kitchen prep sheets.
+- **Preparation Target Engine**: Live cooking requirements from pre-orders with adjustable walk-in buffer (0–50%).
+- **Pure CSS Bar Charts**: Pre-orders vs recommended batch sizes per item.
+- **Printable Kitchen Prep Sheet**: Built-in `window.print()` styling.
 
 ---
 
-## 🚀 How to Run Locally
+## 🚀 Quick Start
 
-### Prerequisites
-- Node.js (v18+ recommended)
-- npm (v9+ recommended)
-
-### Quick Start
+### Demo Mode (No backend, zero setup)
 ```bash
-# 1. Install dependencies
 npm install
-
-# 2. Start the Vite development server
 npm run dev
-
-# 3. Open in your browser
-http://localhost:3000/
+# Open http://localhost:3000
 ```
+The app runs fully in LocalStorage. Use the Student/Staff role switcher in the header. Load sample orders from the footer to populate the demand dashboard.
 
-To build for production verification:
+### Live Mode (Supabase backend)
+See **[SETUP.md](./SETUP.md)** for the full step-by-step guide.
+
 ```bash
-npm run build
-npm run preview
+cp .env.example .env
+# Fill in VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY
+npm run dev
 ```
 
 ---
 
-## 📐 Business Rules Explained (For Viva Defense)
+## 🏗️ Architecture
 
-### 1. The Token Allocation Rule (`src/utils/tokens.js`)
-- Tokens follow the sequential pattern `SC-101`, `SC-102`, `SC-103`, etc.
-- **Allocator Logic**: On order submission, the allocator checks if the stored `dateKey` matches today's date (`YYYY-MM-DD`).
-  - If a new day has started, the counter resets to base **100**.
-  - **Reconciliation**: To prevent token duplication, the counter is reconciled against the highest existing token number found in saved orders for that day:
-    $$\text{counter} = \max(\text{storedCounter}, \text{highestTokenFound})$$
-  - The next assigned token is `SC-${counter + 1}`.
-- *Viva Note*: In this demo, the allocator uses LocalStorage. In a production multi-device environment, this would be an atomic database sequence to prevent race conditions.
-
-### 2. The Demand & Buffer Calculation Rule (`src/utils/demand.js`)
-- **Total Demand Today**: The sum of all ordered dish quantities where `dateKey === today` and `status !== 'Expired'`. (Note: **Collected orders remain included**, so demand reflects the full day's consumption).
-- **Active Orders**: Orders with status `Placed`, `Preparing`, or `Ready`.
-- **Still to Cook (Pending)**: Quantities from orders currently in `Placed` status only (`Preparing` and `Ready` items are already on the stove/counter).
-- **Heuristic Buffer Formula**:
-  $$\text{Buffer} = \lceil \text{Ordered} \times \text{Buffer Rate} \rceil$$
-  $$\text{Recommended Prep} = \text{Ordered} + \text{Buffer}$$
-  *Example*: If 20 portions of Masala Dosa are ordered with a 10% buffer rate ($0.10$):
-  $$\text{Buffer} = \lceil 20 \times 0.10 \rceil = 2$$
-  $$\text{Recommended} = 20 + 2 = 22 \text{ units}$$
-- *Viva Note*: The buffer is explicitly labeled in the UI as a simple heuristic rule for walk-in students, not an opaque AI prediction.
-
-### 3. Estimated Pickup Time (`src/utils/dates.js`)
-- Calculated as:
-  $$\text{Pickup Time} = \text{Order Time} + \max(\text{prep times of items}) + 5 \text{ min queue buffer}$$
-- Rounded up to the nearest **5 minutes** (e.g., 11:41 AM + 17 min = 11:58 AM → rounded to 12:00 PM).
-
-### 4. LocalStorage & Offline Resilience (`src/utils/storage.js`)
-- All application state is stored locally under keys prefixed with `smartcanteen:`:
-  - `smartcanteen:menu`
-  - `smartcanteen:cart`
-  - `smartcanteen:orders`
-  - `smartcanteen:tokenState`
-  - `smartcanteen:settings`
-- Reads use `safeLoad(key, fallback, validator)` with `try/catch` and schema validation. Even if storage is corrupted (e.g. invalid JSON `"{bad"`), the application recovers smoothly with defaults instead of crashing.
+```
+SmartCanteen
+│
+├─ Frontend (React 18 + Vite)
+│   ├─ src/App.jsx              — Root: auth routing + layout
+│   ├─ src/context/AppContext.jsx — Unified context (composed from hooks)
+│   ├─ src/hooks/
+│   │   ├─ useAuth.js           — Session, profile, role
+│   │   ├─ useMenu.js           — Menu + realtime subscription
+│   │   ├─ useOrders.js         — Orders + realtime subscription
+│   │   └─ useSettings.js       — Buffer rate, canteen open/close
+│   ├─ src/services/
+│   │   ├─ authService.js       — signIn / signUp / signOut
+│   │   ├─ menuService.js       — fetchMenu / addItem / toggleAvailability
+│   │   ├─ orderService.js      — placeOrder (RPC) / fetchOrders / subscribe
+│   │   └─ settingsService.js   — fetchSettings / updateBufferRate
+│   ├─ src/lib/supabaseClient.js — Singleton client + isSupabaseConfigured flag
+│   └─ src/components/          — 13 UI components (UI unchanged)
+│
+├─ Backend (Supabase — optional)
+│   └─ supabase/migrations/
+│       ├─ 001_schema.sql       — 8 tables, triggers, auto-profile creation
+│       ├─ 002_rls.sql          — Row-Level Security policies
+│       ├─ 003_functions.sql    — Secure RPCs (place_order, transition_order_status, ...)
+│       └─ 004_seed.sql         — 15 default menu items
+│
+└─ Tests
+    ├─ scratch/test_supabase_rls.mjs       — RLS policy verification
+    └─ scratch/test_token_allocation.mjs   — Token concurrency & idempotency
+```
 
 ---
 
-## 🎬 2-Minute Viva Demonstration Script
+## 📐 Business Rules
 
-When presenting to your viva examiner, follow this seamless 2-minute walkthrough:
+### Token Allocation (`SC-101`, `SC-102`, ...)
 
-1. **Step 1: Introduction (15s)**
-   - Show the header: point out the **Student / Staff** segmented role switcher and the editorial palette.
-   - Mention that data is completely self-contained in the browser via LocalStorage with zero backend required.
+**Demo mode**: Sequential counter in LocalStorage. Day-reconciled to prevent gaps.
 
-2. **Step 2: Student Menu & Cart (30s)**
-   - Filter by `Beverages` or search for *"Dosa"*.
-   - Add **2 Masala Dosas** and **3 Masala Chais**. Show how the **Cart Badge** in the header immediately updates to **5**.
-   - Navigate to the **Cart**: show the calculated items count (5), total (₹165), estimated pickup time (e.g., 12:05 PM), and queue buffer.
-   - Point out the sold-out guard: Chole Bhature is marked "SOLD OUT" and cannot be added.
+**Live mode**: Atomic PostgreSQL sequence using `SELECT FOR UPDATE` on the `daily_token_counters` table. Race conditions are impossible — the row is locked for the duration of each token allocation.
 
-3. **Step 3: Pre-Order Confirmation & Token Generation (25s)**
-   - Click **Place Pre-Order**. Show the in-app confirmation modal with double-submit protection.
-   - Confirm the order: show the toast notification announcing **Token SC-109** (or next sequential token).
-   - Show the **My Orders** tracking screen with the dark hero banner and the visual 4-step progress timeline (*Placed*).
+### Order Placement Security
 
-4. **Step 4: Kitchen Counter Lifecycle (25s)**
-   - Switch role to **Staff**.
-   - Show the **Incoming pre-orders** queue: point out token **SC-109** at the top.
-   - Click `Mark Preparing →`: show the card status transition to amber *Preparing*.
-   - Click `Mark Ready →`: transition to green *Ready*.
-   - Click `Mark Collected →`: show the order moving from Active into the **History** accordion with a recorded `collectedAt` timestamp.
-   - Switch back to **Student** to prove that **My Orders** reflects the updated status live.
+The `place_order()` RPC (SECURITY DEFINER) enforces:
+1. User must be authenticated as `student` role
+2. Canteen must be open (`ordering_open = TRUE`)
+3. Current time must be within operating hours
+4. Each cart item is validated against live server prices
+5. Unavailable items are rejected
+6. Token allocated atomically
+7. `idempotency_key` prevents duplicate submissions on retry
 
-5. **Step 5: Demand Dashboard (25s)**
-   - Switch to **Staff → Demand**.
-   - Show the **Units to Prepare** KPI and the **Prep List** table.
-   - Adjust the **Walk-in Buffer slider** from 10% to 20% and show how the preparation targets recalculate dynamically in real time.
-   - Show the pure CSS **Demand per item** horizontal bar chart comparing pre-ordered quantities against recommended kitchen prep batches.
-   - Point to the **Footer** for the "↺ Reset Demo Data" button to cleanly reset the app back to initial token SC-101.
+### Demand & Buffer Calculation
+
+$$\text{Buffer} = \lceil \text{TotalOrdered} \times \text{BufferRate} \rceil$$
+$$\text{Recommended Prep} = \text{TotalOrdered} + \text{Buffer}$$
+
+Default `bufferRate = 0.10` (10%). Adjustable by staff/admin in real time via the Demand Dashboard slider.
+
+### Estimated Pickup Time
+
+$$\text{Pickup} = \text{Order Time} + \max(\text{prep times}) + 5\text{ min queue buffer}$$
+
+Rounded up to the nearest 5 minutes.
 
 ---
 
@@ -132,33 +121,105 @@ When presenting to your viva examiner, follow this seamless 2-minute walkthrough
 
 ```
 Smart Canteen final/
-├── index.html                   # HTML template with Google Fonts (Playfair & DM Sans)
-├── package.json                 # Minimal React 18 + Vite configuration
-├── vite.config.js               # Vite config on port 3000
-├── src/
-│   ├── main.jsx                 # React root mount
-│   ├── App.jsx                  # Main view switcher & provider layout
-│   ├── App.css                  # Design system tokens, responsive grid & print rules
-│   ├── context/
-│   │   └── AppContext.jsx       # Single source of truth (menu, cart, orders, tokens)
-│   ├── components/
-│   │   ├── Header.jsx           # Brand, role switcher, live navigation badge
-│   │   ├── FoodCard.jsx         # Card with 4:3 media, price, prep, steppers
-│   │   ├── FoodImage.jsx        # Image loader with graceful serif letter fallback
-│   │   ├── Cart.jsx             # Tray review, pickup estimation & checkout modal
-│   │   ├── OrdersPage.jsx       # Student tracking, hero banner & progress timeline
-│   │   ├── StaffOrders.jsx      # Kitchen queue, status filters & history accordion
-│   │   ├── DemandDashboard.jsx  # Cooking targets, buffer slider & CSS bar charts
-│   │   ├── MenuManagement.jsx   # Dish table, availability switches & Add/Edit modal
-│   │   ├── StatusBadge.jsx      # Accessible color + text state indicators
-│   │   ├── Toast.jsx            # Non-blocking auto-dismiss notifications
-│   │   ├── ConfirmDialog.jsx    # Accessible modal with Escape key handling
-│   │   └── Footer.jsx           # LocalStorage disclaimer & demo data reset
-│   └── utils/
-│       ├── dates.js             # Local YYYY-MM-DD keys, time formatting & expiry
-│       ├── demand.js            # Pure demand math & buffer calculations
-│       ├── sampleOrders.js      # Realistic demo orders for viva presentation
-│       ├── seedMenu.js          # 15 canteen dishes across 5 categories
-│       ├── storage.js           # safeLoad & safeSave wrapper
-│       └── tokens.js            # Sequential SC-101 allocator & reconciliation
+├── index.html                     # Google Fonts (Playfair Display + DM Sans)
+├── vite.config.js                 # Vite — port 3000
+├── package.json                   # React 18 + Supabase JS + Vite
+├── .env.example                   # Copy to .env and fill in credentials
+├── .gitignore
+├── SETUP.md                       # Full Supabase setup guide
+├── supabase/migrations/
+│   ├── 001_schema.sql             # Tables, indexes, triggers
+│   ├── 002_rls.sql                # Row-Level Security policies
+│   ├── 003_functions.sql          # RPCs: place_order, transition_order_status, ...
+│   └── 004_seed.sql               # Default 15-item menu data
+├── scratch/
+│   ├── test_supabase_rls.mjs      # RLS tests (npm run test:rls)
+│   └── test_token_allocation.mjs  # Token concurrency tests (npm run test:tokens)
+└── src/
+    ├── main.jsx
+    ├── App.jsx                    # Auth routing + view switcher
+    ├── App.css                    # Full design system (cream/beige palette)
+    ├── lib/
+    │   └── supabaseClient.js      # Supabase singleton + isSupabaseConfigured flag
+    ├── context/
+    │   └── AppContext.jsx         # Unified context composing all hooks
+    ├── hooks/
+    │   ├── useAuth.js             # Auth session + profile + role
+    │   ├── useMenu.js             # Menu CRUD + realtime
+    │   ├── useOrders.js           # Order placement + status + realtime
+    │   └── useSettings.js        # Settings sync
+    ├── services/
+    │   ├── authService.js
+    │   ├── menuService.js
+    │   ├── orderService.js
+    │   └── settingsService.js
+    ├── components/
+    │   ├── AuthPage.jsx           # Sign in / Sign up UI
+    │   ├── Header.jsx             # Auth-aware navigation
+    │   ├── Footer.jsx             # Demo/live mode indicator
+    │   ├── FoodCard.jsx
+    │   ├── FoodImage.jsx
+    │   ├── StudentMenu.jsx
+    │   ├── Cart.jsx
+    │   ├── OrdersPage.jsx
+    │   ├── StaffOrders.jsx
+    │   ├── DemandDashboard.jsx
+    │   ├── MenuManagement.jsx
+    │   ├── StatusBadge.jsx
+    │   ├── Toast.jsx
+    │   └── ConfirmDialog.jsx
+    └── utils/
+        ├── dates.js               # Date keys, pickup time calc, order expiry
+        ├── demand.js              # Pure demand + buffer math
+        ├── sampleOrders.js        # Demo orders for viva
+        ├── seedMenu.js            # 15 canteen dishes
+        ├── storage.js             # safeLoad / safeSave wrappers
+        └── tokens.js             # Demo-mode token allocator
+```
+
+---
+
+## 🔐 Security Model
+
+| Concern | Solution |
+|---------|----------|
+| Price tampering | `place_order()` fetches server prices — client totals ignored |
+| Token races | `SELECT FOR UPDATE` row lock on `daily_token_counters` |
+| Duplicate orders | `idempotency_key UNIQUE` constraint + replay detection |
+| Cross-user data access | RLS: student can only SELECT own `orders` |
+| Role escalation | RLS `WITH CHECK` prevents self-promotion; only admin can set roles |
+| Secret keys | Only anon key in frontend; service_role key never exposed |
+| Audit trail | All staff actions written to `audit_logs` (append-only) |
+
+---
+
+## 🎬 2-Minute Viva Demonstration Script
+
+### Demo Mode (no Supabase configured)
+
+1. **Introduction (15s)** — Show header, explain Student/Staff role switcher. Note demo mode footer indicator.
+2. **Student Order (30s)** — Filter "Beverages", add 2 Masala Dosas + 3 Chais. Show cart badge (5), estimated pickup, sold-out guard on Chole Bhature.
+3. **Place Order (25s)** — Place pre-order. Show token (`SC-109`), toast, and My Orders tracking timeline.
+4. **Kitchen Lifecycle (25s)** — Switch to Staff. Mark Preparing → Ready → Collected. Switch back to Student to show live status update.
+5. **Demand Dashboard (25s)** — Show demand KPIs, adjust buffer slider from 10% → 20%, watch recommendations recalculate. Show the CSS bar chart and print prep sheet.
+
+### Live Mode (Supabase configured)
+
+Same flow, but:
+- Sign in/sign up with email + password
+- All data persists across devices and browser refreshes
+- Kitchen staff on a different device see new orders instantly
+
+---
+
+## 📦 npm Scripts
+
+```bash
+npm run dev          # Start Vite dev server on port 3000
+npm run build        # Production build to /dist
+npm run preview      # Preview production build
+
+npm run test:rls     # RLS policy verification tests
+npm run test:tokens  # Token concurrency + idempotency tests
+npm run test:all     # Run all tests
 ```

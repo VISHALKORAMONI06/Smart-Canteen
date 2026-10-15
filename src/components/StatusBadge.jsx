@@ -37,6 +37,12 @@ export default function StatusBadge({ status }) {
           className: 'badge-expired',
           dotChar: '✕'
         };
+      case 'Cancelled':
+        return {
+          label: 'Cancelled',
+          className: 'badge-expired',
+          dotChar: '✕'
+        };
       default:
         return {
           label: st || 'Unknown',

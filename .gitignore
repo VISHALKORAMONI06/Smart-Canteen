@@ -3,3 +3,11 @@ dist/
 .env
 .env.*
 !.env.example
+
+# Supabase local development
+.supabase/
+supabase/.temp/
+
+# Coverage / test output
+coverage/
+*.log

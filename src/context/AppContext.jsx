@@ -1,91 +1,105 @@
+/**
+ * AppContext — Unified application context for SmartCanteen.
+ *
+ * This is the single source of truth that composes:
+ * - Auth (useAuth)
+ * - Menu (useMenu)
+ * - Orders (useOrders)
+ * - Settings (useSettings)
+ * - Cart (local state with LocalStorage persistence)
+ * - UI state (toasts, confirmDialog, navigation)
+ *
+ * Component API is preserved for backward compatibility.
+ * When Supabase is configured, real-time subscriptions and server-side
+ * order placement are used automatically. Otherwise, the app runs in
+ * LocalStorage demo mode.
+ */
 import React, { createContext, useContext, useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { isSupabaseConfigured } from '../lib/supabaseClient.js';
+import { useAuth } from '../hooks/useAuth.js';
+import { useMenu } from '../hooks/useMenu.js';
+import { useOrders } from '../hooks/useOrders.js';
+import { useSettings } from '../hooks/useSettings.js';
 import { STORAGE_KEYS, safeLoad, safeSave } from '../utils/storage.js';
 import { INITIAL_MENU_ITEMS } from '../utils/seedMenu.js';
-import { getLocalDateKey, calculateEstimatedPickupTime, expireStaleOrders } from '../utils/dates.js';
-import { allocateNextToken, INITIAL_TOKEN_COUNTER } from '../utils/tokens.js';
+import { INITIAL_TOKEN_COUNTER } from '../utils/tokens.js';
 import { DEFAULT_BUFFER_RATE } from '../utils/demand.js';
-import { generateSampleOrders } from '../utils/sampleOrders.js';
+import { getLocalDateKey } from '../utils/dates.js';
 
 const AppContext = createContext(null);
 
 export function AppProvider({ children }) {
-  // Navigation & Role State
-  const [role, setRole] = useState('student'); // 'student' | 'staff'
-  const [studentView, setStudentView] = useState('menu'); // 'menu' | 'cart' | 'orders'
-  const [staffView, setStaffView] = useState('orders'); // 'orders' | 'demand' | 'menu'
+  // ---------------------------------------------------------------------------
+  // Auth layer
+  // ---------------------------------------------------------------------------
+  const auth = useAuth();
 
-  // Core Data State (persisted to LocalStorage)
-  const [menu, setMenu] = useState(() => {
-    const loaded = safeLoad(STORAGE_KEYS.MENU, INITIAL_MENU_ITEMS, (data) => Array.isArray(data) && data.length > 0);
-    // Ensure standard default dishes are linked to their authentic local dish photos
-    return loaded.map((item) => {
-      const seedMatch = INITIAL_MENU_ITEMS.find((s) => s.id === item.id || s.name.trim().toLowerCase() === item.name.trim().toLowerCase());
-      if (seedMatch && (!item.imageUrl || item.imageUrl.includes('unsplash.com') || item.imageUrl !== seedMatch.imageUrl)) {
-        return { ...item, imageUrl: seedMatch.imageUrl };
-      }
-      return item;
-    });
+  // ---------------------------------------------------------------------------
+  // Navigation state
+  // ---------------------------------------------------------------------------
+  // Effective role: auth role when Supabase is configured, demo role otherwise
+  const effectiveRole = auth.role; // 'student' | 'staff' | 'admin'
+
+  const [studentView, setStudentView] = useState('menu');
+  const [staffView, setStaffView]     = useState('orders');
+
+  // ---------------------------------------------------------------------------
+  // Menu layer
+  // ---------------------------------------------------------------------------
+  const menuHook = useMenu(effectiveRole);
+
+  // ---------------------------------------------------------------------------
+  // Orders layer
+  // ---------------------------------------------------------------------------
+  const ordersHook = useOrders({
+    role:   effectiveRole,
+    userId: auth.userId,
+    menu:   menuHook.menu
   });
 
+  // ---------------------------------------------------------------------------
+  // Settings layer
+  // ---------------------------------------------------------------------------
+  const settingsHook = useSettings();
+
+  // ---------------------------------------------------------------------------
+  // Cart state (LocalStorage persistence — cleared only on successful order)
+  // ---------------------------------------------------------------------------
   const [cart, setCart] = useState(() =>
     safeLoad(STORAGE_KEYS.CART, [], Array.isArray)
   );
-
-  // Initialize orders: if empty, seed with realistic sample orders to showcase full workflow
-  const [orders, setOrders] = useState(() => {
-    const today = getLocalDateKey();
-    const stored = safeLoad(STORAGE_KEYS.ORDERS, null, Array.isArray);
-    if (stored !== null) return stored;
-    return generateSampleOrders(today, INITIAL_MENU_ITEMS);
-  });
-
-  const [tokenState, setTokenState] = useState(() =>
-    safeLoad(STORAGE_KEYS.TOKEN_STATE, { dateKey: getLocalDateKey(), counter: 108 }, (data) =>
-      Boolean(data && typeof data.counter === 'number' && typeof data.dateKey === 'string')
-    )
-  );
-
-  const [settings, setSettings] = useState(() =>
-    safeLoad(STORAGE_KEYS.SETTINGS, { bufferRate: DEFAULT_BUFFER_RATE }, (data) =>
-      Boolean(data && typeof data.bufferRate === 'number')
-    )
-  );
-
-  // Transient UI State: Toasts & Confirmations
-  const [toasts, setToasts] = useState([]);
-  const [confirmDialog, setConfirmDialog] = useState(null);
-  const isPlacingOrderRef = useRef(false);
-
-  // ---------------------------------------------------------
-  // Persist state to LocalStorage
-  // ---------------------------------------------------------
-  useEffect(() => {
-    safeSave(STORAGE_KEYS.MENU, menu);
-  }, [menu]);
 
   useEffect(() => {
     safeSave(STORAGE_KEYS.CART, cart);
   }, [cart]);
 
+  // Clear cart when user signs out
   useEffect(() => {
-    safeSave(STORAGE_KEYS.ORDERS, orders);
-  }, [orders]);
+    if (!auth.isAuthenticated && isSupabaseConfigured) {
+      setCart([]);
+    }
+  }, [auth.isAuthenticated]);
 
-  useEffect(() => {
-    safeSave(STORAGE_KEYS.TOKEN_STATE, tokenState);
-  }, [tokenState]);
+  // ---------------------------------------------------------------------------
+  // Menu lookup Map (memoized)
+  // ---------------------------------------------------------------------------
+  const menuMap = useMemo(() => {
+    const map = new Map();
+    for (const item of menuHook.menu) {
+      map.set(item.id, item);
+    }
+    return map;
+  }, [menuHook.menu]);
 
-  useEffect(() => {
-    safeSave(STORAGE_KEYS.SETTINGS, settings);
-  }, [settings]);
+  // ---------------------------------------------------------------------------
+  // Toast notifications
+  // ---------------------------------------------------------------------------
+  const [toasts, setToasts] = useState([]);
+  const [confirmDialog, setConfirmDialog] = useState(null);
 
-  // ---------------------------------------------------------
-  // Toast Notification System
-  // ---------------------------------------------------------
   const addToast = useCallback((message, type = 'success') => {
     const id = `toast_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
     setToasts((prev) => [...prev, { id, message, type }]);
-
     setTimeout(() => {
       setToasts((prev) => prev.filter((t) => t.id !== id));
     }, 3500);
@@ -95,76 +109,54 @@ export function AppProvider({ children }) {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   }, []);
 
-  // ---------------------------------------------------------
-  // Stale Order Expiry (mount + 60s interval)
-  // ---------------------------------------------------------
-  useEffect(() => {
-    const checkExpiry = () => {
-      const today = getLocalDateKey();
-      setOrders((prevOrders) => {
-        const { updatedOrders, expiredCount } = expireStaleOrders(prevOrders, today);
-        if (expiredCount > 0) {
-          console.info(`[SmartCanteen] Expired ${expiredCount} stale orders from previous days.`);
-        }
-        return updatedOrders;
-      });
-    };
+  // ---------------------------------------------------------------------------
+  // Cart computed values
+  // ---------------------------------------------------------------------------
+  const cartBadge = useMemo(() =>
+    cart.reduce((sum, item) => sum + (item.quantity || 0), 0), [cart]
+  );
 
-    checkExpiry();
-    const interval = setInterval(checkExpiry, 60000);
-    return () => clearInterval(interval);
-  }, []);
-
-  // ---------------------------------------------------------
-  // Menu Item Lookup Map
-  // ---------------------------------------------------------
-  const menuMap = useMemo(() => {
-    const map = new Map();
-    for (const item of menu) {
-      map.set(item.id, item);
-    }
-    return map;
-  }, [menu]);
-
-  // ---------------------------------------------------------
-  // Cart Actions & Metrics
-  // ---------------------------------------------------------
-  const cartBadge = useMemo(() => {
-    return cart.reduce((sum, item) => sum + (item.quantity || 0), 0);
-  }, [cart]);
-
+  // ---------------------------------------------------------------------------
+  // Cart actions
+  // ---------------------------------------------------------------------------
   const addToCart = useCallback((itemId) => {
     const menuItem = menuMap.get(itemId);
     if (!menuItem || !menuItem.available) {
       addToast('This item is currently unavailable.', 'error');
       return;
     }
-
+    const maxQty = settingsHook.settings.maxQtyPerItem || 10;
     setCart((prev) => {
       const existing = prev.find((item) => item.itemId === itemId);
       if (existing) {
+        if (existing.quantity >= maxQty) {
+          addToast(`Maximum ${maxQty} of this item allowed.`, 'error');
+          return prev;
+        }
         return prev.map((item) =>
           item.itemId === itemId ? { ...item, quantity: item.quantity + 1 } : item
         );
       }
       return [...prev, { itemId, quantity: 1 }];
     });
-  }, [menuMap, addToast]);
+  }, [menuMap, addToast, settingsHook.settings.maxQtyPerItem]);
 
   const updateCartQuantity = useCallback((itemId, delta) => {
+    const maxQty = settingsHook.settings.maxQtyPerItem || 10;
     setCart((prev) => {
       const existing = prev.find((item) => item.itemId === itemId);
       if (!existing) return prev;
-
       const newQty = existing.quantity + delta;
-      if (newQty <= 0) {
-        return prev.filter((item) => item.itemId !== itemId);
+      if (newQty <= 0) return prev.filter((item) => item.itemId !== itemId);
+      if (newQty > maxQty) {
+        addToast(`Maximum ${maxQty} of this item allowed.`, 'error');
+        return prev;
       }
       return prev.map((item) =>
         item.itemId === itemId ? { ...item, quantity: newQty } : item
       );
     });
-  }, []);
+  }, [settingsHook.settings.maxQtyPerItem, addToast]);
 
   const removeFromCart = useCallback((itemId) => {
     setCart((prev) => prev.filter((item) => item.itemId !== itemId));
@@ -174,227 +166,214 @@ export function AppProvider({ children }) {
     setCart([]);
   }, []);
 
-  // ---------------------------------------------------------
-  // Order Placement (with strict double-submit protection)
-  // ---------------------------------------------------------
+  // ---------------------------------------------------------------------------
+  // Place order — bridges cart + orders hook
+  // ---------------------------------------------------------------------------
+  const isPlacingOrderRef = useRef(false);
+
   const placeOrder = useCallback(async (kitchenNote = '') => {
-    // 1. Guard against concurrent / duplicate submissions
     if (isPlacingOrderRef.current) {
-      console.warn('[SmartCanteen] Blocked duplicate order submission within same tick.');
+      console.warn('[SmartCanteen] Blocked duplicate order submission.');
       return null;
     }
     isPlacingOrderRef.current = true;
 
     try {
-      if (cart.length === 0) {
-        addToast('Your cart is empty.', 'error');
+      const idempotencyKey = isSupabaseConfigured
+        ? (typeof crypto !== 'undefined' ? crypto.randomUUID() : `idem_${Date.now()}`)
+        : null;
+
+      const { order, error } = await ordersHook.placeOrder({
+        cart,
+        menuMap,
+        kitchenNote,
+        idempotencyKey
+      });
+
+      if (error) {
+        // Parse Supabase RPC error codes
+        const msg = parseOrderError(error);
+        addToast(msg, 'error');
         return null;
       }
 
-      // Check if any cart item is unavailable or deleted
-      const invalidItems = [];
-      const snapshottedItems = [];
-
-      for (const cartRow of cart) {
-        const item = menuMap.get(cartRow.itemId);
-        if (!item || !item.available) {
-          invalidItems.push(item ? item.name : 'Unknown item');
-        } else {
-          snapshottedItems.push({
-            itemId: item.id,
-            name: item.name,
-            unitPrice: item.price,
-            quantity: cartRow.quantity,
-            prepTime: item.prepTime
-          });
-        }
-      }
-
-      if (invalidItems.length > 0) {
-        addToast(`Cannot place order: ${invalidItems.join(', ')} is unavailable or deleted. Please remove it from cart.`, 'error');
-        return null;
-      }
-
-      const today = getLocalDateKey();
-      const now = new Date();
-      const createdAt = now.toISOString();
-
-      // Allocate sequential token
-      const { nextToken, nextTokenState } = allocateNextToken(tokenState, orders, today);
-
-      // Estimated pickup time
-      const pickupAt = calculateEstimatedPickupTime(snapshottedItems, now);
-
-      const totalAmount = snapshottedItems.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0);
-      const totalPortions = snapshottedItems.reduce((sum, item) => sum + item.quantity, 0);
-
-      const newOrder = {
-        id: `ord_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-        token: nextToken,
-        dateKey: today,
-        createdAt,
-        pickupAt,
-        items: snapshottedItems,
-        totalAmount,
-        totalPortions,
-        status: 'Placed',
-        collectedAt: null,
-        note: kitchenNote.trim()
-      };
-
-      // Atomic state updates
-      setOrders((prev) => [newOrder, ...prev]);
-      setTokenState(nextTokenState);
+      // Clear cart only after server confirmation
       setCart([]);
       setStudentView('orders');
-
-      addToast(`Pre-order confirmed! Token: ${nextToken}`, 'success');
-      return newOrder;
+      addToast(`Pre-order confirmed! Token: ${order.token}`, 'success');
+      return order;
     } finally {
-      // Release lock after brief delay
-      setTimeout(() => {
-        isPlacingOrderRef.current = false;
-      }, 300);
+      setTimeout(() => { isPlacingOrderRef.current = false; }, 500);
     }
-  }, [cart, menuMap, tokenState, orders, addToast]);
+  }, [cart, menuMap, ordersHook, addToast]);
 
-  // ---------------------------------------------------------
-  // Order Lifecycle Transitions
-  // Placed -> Preparing -> Ready -> Collected
-  // ---------------------------------------------------------
-  const transitionOrderStatus = useCallback((orderId, targetStatus) => {
-    const validTransitions = {
-      Placed: ['Preparing'],
-      Preparing: ['Ready'],
-      Ready: ['Collected'],
-      Collected: [],
-      Expired: []
-    };
+  // ---------------------------------------------------------------------------
+  // Order status transitions (bridging orders hook)
+  // ---------------------------------------------------------------------------
+  const transitionOrderStatus = useCallback(async (orderId, targetStatus) => {
+    const { error } = await ordersHook.transitionOrderStatus(orderId, targetStatus);
+    if (error) {
+      const msg = parseOrderError(error);
+      addToast(msg, 'error');
+      return;
+    }
+    addToast(`Order marked as ${targetStatus}.`, 'info');
+  }, [ordersHook, addToast]);
 
-    setOrders((prev) =>
-      prev.map((order) => {
-        if (order.id !== orderId) return order;
-
-        const allowedNext = validTransitions[order.status] || [];
-        if (!allowedNext.includes(targetStatus)) {
-          console.warn(`[SmartCanteen] Invalid transition attempted: ${order.status} -> ${targetStatus}`);
-          addToast(`Cannot transition order from ${order.status} to ${targetStatus}`, 'error');
-          return order;
-        }
-
-        const now = new Date().toISOString();
-        const updated = {
-          ...order,
-          status: targetStatus,
-          collectedAt: targetStatus === 'Collected' ? now : order.collectedAt
-        };
-
-        addToast(`Order ${order.token} marked as ${targetStatus}.`, 'info');
-        return updated;
-      })
-    );
-  }, [addToast]);
-
-  // ---------------------------------------------------------
-  // Menu Management Actions
-  // ---------------------------------------------------------
-  const addMenuItem = useCallback((newItem) => {
-    const id = `item-${Date.now()}`;
-    const itemWithId = { ...newItem, id };
-    setMenu((prev) => [...prev, itemWithId]);
+  // ---------------------------------------------------------------------------
+  // Menu actions (bridging menu hook) with toasts
+  // ---------------------------------------------------------------------------
+  const addMenuItem = useCallback(async (newItem) => {
+    const { error } = await menuHook.addMenuItemAction(newItem);
+    if (error) { addToast(`Failed to add item: ${error.message}`, 'error'); return; }
     addToast(`"${newItem.name}" added to menu.`, 'success');
-  }, [addToast]);
+  }, [menuHook, addToast]);
 
-  const updateMenuItem = useCallback((updatedItem) => {
-    setMenu((prev) => prev.map((item) => (item.id === updatedItem.id ? updatedItem : item)));
+  const updateMenuItem = useCallback(async (updatedItem) => {
+    const { error } = await menuHook.updateMenuItemAction(updatedItem);
+    if (error) { addToast(`Failed to update item: ${error.message}`, 'error'); return; }
     addToast(`"${updatedItem.name}" updated successfully.`, 'success');
-  }, [addToast]);
+  }, [menuHook, addToast]);
 
-  const toggleItemAvailability = useCallback((itemId) => {
-    setMenu((prev) =>
-      prev.map((item) => {
-        if (item.id === itemId) {
-          const nextVal = !item.available;
-          addToast(`${item.name} is now ${nextVal ? 'available' : 'unavailable'}.`, 'info');
-          return { ...item, available: nextVal };
-        }
-        return item;
-      })
-    );
-  }, [addToast]);
-
-  const deleteMenuItem = useCallback((itemId) => {
+  const toggleItemAvailability = useCallback(async (itemId) => {
     const item = menuMap.get(itemId);
-    setMenu((prev) => prev.filter((it) => it.id !== itemId));
-    // Remove from active cart if present
-    setCart((prev) => prev.filter((it) => it.itemId !== itemId));
-    addToast(`"${item ? item.name : 'Item'}" removed from menu.`, 'info');
-  }, [menuMap, addToast]);
+    const { error } = await menuHook.toggleAvailabilityAction(itemId);
+    if (error) { addToast(`Failed to toggle availability: ${error.message}`, 'error'); return; }
+    if (item) {
+      const nextVal = !item.available;
+      addToast(`${item.name} is now ${nextVal ? 'available' : 'unavailable'}.`, 'info');
+    }
+  }, [menuHook, menuMap, addToast]);
 
-  // ---------------------------------------------------------
-  // Reset Demo Data
-  // Clears menu (reseeds), cart, orders, and resets token counter to 100
-  // ---------------------------------------------------------
+  const deleteMenuItem = useCallback(async (itemId) => {
+    const item = menuMap.get(itemId);
+    // Also remove from cart
+    setCart((prev) => prev.filter((it) => it.itemId !== itemId));
+    const { error } = await menuHook.deleteMenuItemAction(itemId);
+    if (error) { addToast(`Failed to delete item: ${error.message}`, 'error'); return; }
+    addToast(`"${item ? item.name : 'Item'}" removed from menu.`, 'info');
+  }, [menuHook, menuMap, addToast]);
+
+  // ---------------------------------------------------------------------------
+  // Buffer rate update
+  // ---------------------------------------------------------------------------
+  const updateBufferRate = useCallback(async (rate) => {
+    const { error } = await settingsHook.updateBufferRate(rate);
+    if (error) addToast(`Failed to update buffer rate: ${error.message}`, 'error');
+  }, [settingsHook, addToast]);
+
+  // ---------------------------------------------------------------------------
+  // Demo helpers (safe in Supabase mode — they check isSupabaseConfigured)
+  // ---------------------------------------------------------------------------
   const resetDemoData = useCallback(() => {
-    const today = getLocalDateKey();
-    setMenu(INITIAL_MENU_ITEMS);
+    if (isSupabaseConfigured) {
+      addToast('Demo reset is not available in production mode.', 'error');
+      return;
+    }
+    // Use the statically imported INITIAL_MENU_ITEMS (already at top of file)
+    safeSave(STORAGE_KEYS.MENU, INITIAL_MENU_ITEMS);
     setCart([]);
-    setOrders([]);
-    setTokenState({ dateKey: today, counter: INITIAL_TOKEN_COUNTER });
-    setSettings({ bufferRate: DEFAULT_BUFFER_RATE });
+    ordersHook.resetDemoOrders();
     setStudentView('menu');
     setStaffView('orders');
-    addToast('Demo data reset: menu reseeded, orders cleared, next token SC-101.', 'success');
-  }, [addToast]);
+    addToast('Demo data reset. Menu reseeded, orders cleared.', 'success');
+    // Reload so menu hook re-reads from freshly written LocalStorage
+    setTimeout(() => window.location.reload(), 400);
+  }, [menuHook, ordersHook, addToast]);
 
-  // Helper to load sample orders (handy for viva demonstration)
   const loadSampleOrders = useCallback(() => {
-    const today = getLocalDateKey();
-    const samples = generateSampleOrders(today, menu);
-    setOrders(samples);
-    setTokenState({ dateKey: today, counter: 108 });
-    addToast('Loaded sample orders for viva demonstration.', 'success');
-  }, [menu, addToast]);
+    if (isSupabaseConfigured) {
+      addToast('Sample orders are not available in production mode.', 'error');
+      return;
+    }
+    ordersHook.loadSampleOrdersDemo(menuHook.menu);
+    addToast('Loaded sample orders for demonstration.', 'success');
+  }, [ordersHook, menuHook.menu, addToast]);
 
-  // Settings update (buffer rate)
-  const updateBufferRate = useCallback((rate) => {
-    const bounded = Math.max(0, Math.min(0.5, Number(rate) || 0));
-    setSettings((prev) => ({ ...prev, bufferRate: bounded }));
-  }, []);
+  // ---------------------------------------------------------------------------
+  // Connection status banner (Supabase only)
+  // ---------------------------------------------------------------------------
+  const [realtimeConnected, setRealtimeConnected] = useState(true);
 
-  // Context value
+  // ---------------------------------------------------------------------------
+  // Context value — preserves original API shape for backward compat
+  // ---------------------------------------------------------------------------
   const value = {
-    role,
-    setRole,
+    // Auth
+    session:         auth.session,
+    user:            auth.user,
+    userId:          auth.userId,
+    profile:         auth.profile,
+    role:            effectiveRole,
+    isAuthenticated: auth.isAuthenticated,
+    isStudent:       auth.isStudent,
+    isStaff:         auth.isStaff,
+    isAdmin:         auth.isAdmin,
+    authLoading:     auth.authLoading,
+    authError:       auth.authError,
+    setAuthError:    auth.setAuthError,
+    signIn:          auth.signIn,
+    signUp:          auth.signUp,
+    signOut:         auth.signOut,
+    setDemoRole:     auth.setDemoRole,
+    isDemoMode:      auth.isDemoMode,
+    // Compat: role setter (demo mode only)
+    setRole:         auth.setDemoRole,
+
+    // Navigation
     studentView,
     setStudentView,
     staffView,
     setStaffView,
-    menu,
+
+    // Menu
+    menu:            menuHook.menu,
     menuMap,
+    menuLoading:     menuHook.menuLoading,
+    menuError:       menuHook.menuError,
+
+    // Cart
     cart,
     cartBadge,
-    orders,
-    tokenState,
-    settings,
-    toasts,
-    addToast,
-    removeToast,
-    confirmDialog,
-    setConfirmDialog,
     addToCart,
     updateCartQuantity,
     removeFromCart,
     clearCart,
+
+    // Orders
+    orders:          ordersHook.orders,
+    ordersLoading:   ordersHook.ordersLoading,
+    ordersError:     ordersHook.ordersError,
+    isPlacingOrder:  ordersHook.isPlacingOrder,
+    tokenState:      ordersHook.tokenState,
+
+    // Settings
+    settings:        settingsHook.settings,
+
+    // Actions
     placeOrder,
     transitionOrderStatus,
     addMenuItem,
     updateMenuItem,
     toggleItemAvailability,
     deleteMenuItem,
+    updateBufferRate,
+    toggleOrderingOpen: settingsHook.toggleOrderingOpen,
+
+    // Demo helpers
     resetDemoData,
     loadSampleOrders,
-    updateBufferRate
+
+    // UI
+    toasts,
+    addToast,
+    removeToast,
+    confirmDialog,
+    setConfirmDialog,
+
+    // Real-time state
+    realtimeConnected,
+    isSupabaseConfigured
   };
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
@@ -406,4 +385,23 @@ export function useApp() {
     throw new Error('useApp must be used within an AppProvider');
   }
   return context;
+}
+
+// ---------------------------------------------------------------------------
+// Parse RPC error messages into user-friendly strings
+// ---------------------------------------------------------------------------
+function parseOrderError(error) {
+  const msg = error?.message || '';
+  if (msg.includes('UNAUTHENTICATED'))   return 'You must be signed in to perform this action.';
+  if (msg.includes('CANTEEN_CLOSED'))    return 'The canteen is not accepting orders right now.';
+  if (msg.includes('OUTSIDE_HOURS'))     return 'Orders can only be placed during canteen hours.';
+  if (msg.includes('EMPTY_CART'))        return 'Your cart is empty.';
+  if (msg.includes('ITEM_UNAVAILABLE'))  return msg.split('ITEM_UNAVAILABLE: ')[1] || 'An item in your cart is unavailable.';
+  if (msg.includes('ITEM_NOT_FOUND'))    return 'One or more items in your cart no longer exist on the menu.';
+  if (msg.includes('DUPLICATE_ORDER'))   return 'This order was already submitted. Please refresh and check your orders.';
+  if (msg.includes('INVALID_TRANSITION')) return msg.split('INVALID_TRANSITION: ')[1] || 'Invalid status transition.';
+  if (msg.includes('FORBIDDEN'))        return 'You do not have permission to perform this action.';
+  if (msg.includes('TOO_MANY_ITEMS'))   return 'Your cart has too many distinct items. Please reduce it.';
+  if (msg.includes('QTY_EXCEEDED'))     return 'One or more items exceed the maximum quantity allowed.';
+  return msg || 'An unexpected error occurred. Please try again.';
 }
