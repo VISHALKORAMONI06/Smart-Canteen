@@ -180,7 +180,8 @@ BEGIN
 
   INSERT INTO public.pickup_tokens (order_id, token, expires_at)
   VALUES (v_payment.order_id, v_pickup_token, NOW() + INTERVAL '24 hours')
-  ON CONFLICT (order_id) DO UPDATE SET token = EXCLUDED.token;
+  ON CONFLICT (order_id) DO NOTHING;  -- preserve existing token; never overwrite a live QR code
+
 
   -- 8. Queue confirmation email (idempotent insert)
   SELECT u.email INTO v_student_email

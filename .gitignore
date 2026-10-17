@@ -8,6 +8,10 @@ dist/
 .supabase/
 supabase/.temp/
 
+# Schema dumps (schema-only exports — not for version control)
+supabase/public_backup_check.sql
+supabase/*.sql.bak
+
 # Coverage / test output
 coverage/
 *.log

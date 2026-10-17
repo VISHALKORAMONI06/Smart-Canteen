@@ -1,6 +1,8 @@
 -- =============================================================================
 -- SmartCanteen — Migration 006: RLS Policies for new tables
 -- Extends existing security model. Does NOT weaken any existing policies.
+-- All CREATE POLICY statements are preceded by DROP POLICY IF EXISTS to make
+-- this migration retry-safe (partial-run recovery will not fail).
 -- =============================================================================
 
 -- ---------------------------------------------------------------------------
@@ -10,27 +12,30 @@
 -- No direct INSERT/UPDATE — only SECURITY DEFINER Edge Functions write here
 -- ---------------------------------------------------------------------------
 
+DROP POLICY IF EXISTS "payments_select_own_student" ON public.payments;
 CREATE POLICY "payments_select_own_student"
   ON public.payments FOR SELECT
   USING (auth.uid() = student_id);
 
+DROP POLICY IF EXISTS "payments_select_staff_admin" ON public.payments;
 CREATE POLICY "payments_select_staff_admin"
   ON public.payments FOR SELECT
   USING (public.current_user_role() IN ('staff', 'admin'));
 
 -- No INSERT/UPDATE by clients — Edge Functions use service role key
+DROP POLICY IF EXISTS "payments_no_client_write" ON public.payments;
 CREATE POLICY "payments_no_client_write"
   ON public.payments FOR INSERT
   WITH CHECK (FALSE);
 
 -- ---------------------------------------------------------------------------
 -- INVENTORY policies
--- Students/anon: read availability for active items (stock level only, not full row)
+-- Students: read availability for active items (stock level only)
 -- Staff/Admin: full read access
--- Admin: can update stock quantities
+-- Staff/Admin: can update stock quantities (should be via RPC for audit trail)
 -- ---------------------------------------------------------------------------
 
--- Active students can see inventory for menu availability decisions
+DROP POLICY IF EXISTS "inventory_select_authenticated" ON public.inventory;
 CREATE POLICY "inventory_select_authenticated"
   ON public.inventory FOR SELECT
   USING (
@@ -42,12 +47,12 @@ CREATE POLICY "inventory_select_authenticated"
     )
   );
 
--- Staff/Admin can see all inventory including archived items
+DROP POLICY IF EXISTS "inventory_select_staff_admin" ON public.inventory;
 CREATE POLICY "inventory_select_staff_admin"
   ON public.inventory FOR SELECT
   USING (public.current_user_role() IN ('staff', 'admin'));
 
--- Staff/Admin can update inventory (via RPC only for audit trail)
+DROP POLICY IF EXISTS "inventory_update_staff_admin" ON public.inventory;
 CREATE POLICY "inventory_update_staff_admin"
   ON public.inventory FOR UPDATE
   USING (public.current_user_role() IN ('staff', 'admin'))
@@ -58,11 +63,13 @@ CREATE POLICY "inventory_update_staff_admin"
 -- Append-only audit log — no client writes, staff/admin can read
 -- ---------------------------------------------------------------------------
 
+DROP POLICY IF EXISTS "inv_adj_select_staff_admin" ON public.inventory_adjustments;
 CREATE POLICY "inv_adj_select_staff_admin"
   ON public.inventory_adjustments FOR SELECT
   USING (public.current_user_role() IN ('staff', 'admin'));
 
 -- No direct INSERT — only SECURITY DEFINER functions write adjustment records
+DROP POLICY IF EXISTS "inv_adj_no_client_insert" ON public.inventory_adjustments;
 CREATE POLICY "inv_adj_no_client_insert"
   ON public.inventory_adjustments FOR INSERT
   WITH CHECK (FALSE);
@@ -74,6 +81,7 @@ CREATE POLICY "inv_adj_no_client_insert"
 -- Marking used=TRUE happens via SECURITY DEFINER Edge Function only
 -- ---------------------------------------------------------------------------
 
+DROP POLICY IF EXISTS "pickup_tokens_select_own_student" ON public.pickup_tokens;
 CREATE POLICY "pickup_tokens_select_own_student"
   ON public.pickup_tokens FOR SELECT
   USING (
@@ -82,11 +90,13 @@ CREATE POLICY "pickup_tokens_select_own_student"
     )
   );
 
+DROP POLICY IF EXISTS "pickup_tokens_select_staff_admin" ON public.pickup_tokens;
 CREATE POLICY "pickup_tokens_select_staff_admin"
   ON public.pickup_tokens FOR SELECT
   USING (public.current_user_role() IN ('staff', 'admin'));
 
 -- No direct INSERT/UPDATE — Edge Function uses service role
+DROP POLICY IF EXISTS "pickup_tokens_no_client_write" ON public.pickup_tokens;
 CREATE POLICY "pickup_tokens_no_client_write"
   ON public.pickup_tokens FOR INSERT
   WITH CHECK (FALSE);
@@ -98,26 +108,32 @@ CREATE POLICY "pickup_tokens_no_client_write"
 -- No client writes — triggered from server only
 -- ---------------------------------------------------------------------------
 
+DROP POLICY IF EXISTS "email_notif_select_own_student" ON public.email_notifications;
 CREATE POLICY "email_notif_select_own_student"
   ON public.email_notifications FOR SELECT
   USING (auth.uid() = student_id);
 
+DROP POLICY IF EXISTS "email_notif_select_staff_admin" ON public.email_notifications;
 CREATE POLICY "email_notif_select_staff_admin"
   ON public.email_notifications FOR SELECT
   USING (public.current_user_role() IN ('staff', 'admin'));
 
 -- No client writes
+DROP POLICY IF EXISTS "email_notif_no_client_insert" ON public.email_notifications;
 CREATE POLICY "email_notif_no_client_insert"
   ON public.email_notifications FOR INSERT
   WITH CHECK (FALSE);
 
 -- ---------------------------------------------------------------------------
 -- ANALYTICS VIEW: revenue_summary
--- Staff/Admin only. Aggregates verified paid revenue.
--- Created as a VIEW so no data is downloaded to browser — query runs on DB.
+-- security_invoker = true: view runs as the querying user, not the definer.
+-- This means RLS on orders/payments is enforced — students cannot read revenue.
+-- REVOKE prevents any direct query; access is via get_analytics() RPC only.
 -- ---------------------------------------------------------------------------
 
-CREATE OR REPLACE VIEW public.revenue_summary AS
+CREATE OR REPLACE VIEW public.revenue_summary
+WITH (security_invoker = true)
+AS
 SELECT
   o.business_date,
   COUNT(DISTINCT o.id)                                          AS total_orders,
@@ -148,14 +164,20 @@ ORDER BY o.business_date DESC;
 
 COMMENT ON VIEW public.revenue_summary IS
   'Daily revenue aggregation. Only counts verified captured payments as revenue. '
-  'Staff/Admin access only via RLS on underlying tables.';
+  'security_invoker=true: RLS on underlying tables is enforced for the querying user. '
+  'Direct access revoked; use get_analytics() RPC instead.';
+
+-- Revoke direct query access — all access goes through get_analytics() RPC
+REVOKE ALL ON public.revenue_summary FROM PUBLIC, anon, authenticated;
 
 -- ---------------------------------------------------------------------------
 -- ANALYTICS VIEW: item_performance
--- Best-selling items — staff/admin query only
+-- Same security_invoker pattern — staff/admin see all via get_analytics() RPC.
 -- ---------------------------------------------------------------------------
 
-CREATE OR REPLACE VIEW public.item_performance AS
+CREATE OR REPLACE VIEW public.item_performance
+WITH (security_invoker = true)
+AS
 SELECT
   oi.menu_item_id,
   oi.item_name,
@@ -173,4 +195,10 @@ ORDER BY total_quantity DESC;
 
 COMMENT ON VIEW public.item_performance IS
   'Item-level sales analytics. Only includes orders with verified payment. '
+  'security_invoker=true: RLS enforced. Direct access revoked; use get_analytics() RPC. '
   'No customer PII exposed.';
+
+
+-- Revoke direct query access
+REVOKE ALL ON public.item_performance FROM PUBLIC, anon, authenticated;
+

@@ -84,8 +84,8 @@ CREATE INDEX IF NOT EXISTS idx_payments_student_id     ON public.payments(studen
 CREATE INDEX IF NOT EXISTS idx_payments_rzp_order_id   ON public.payments(razorpay_order_id);
 CREATE INDEX IF NOT EXISTS idx_payments_status         ON public.payments(status);
 
--- Auto-update updated_at
-CREATE TRIGGER trg_payments_updated_at
+-- Auto-update updated_at (CREATE OR REPLACE = retry-safe)
+CREATE OR REPLACE TRIGGER trg_payments_updated_at
   BEFORE UPDATE ON public.payments
   FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
 
@@ -117,8 +117,8 @@ FROM public.menu_items
 WHERE active = TRUE AND archived_at IS NULL
 ON CONFLICT (menu_item_id) DO NOTHING;
 
--- Auto-update updated_at
-CREATE TRIGGER trg_inventory_updated_at
+-- Auto-update updated_at (CREATE OR REPLACE = retry-safe)
+CREATE OR REPLACE TRIGGER trg_inventory_updated_at
   BEFORE UPDATE ON public.inventory
   FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
 
@@ -209,8 +209,8 @@ CREATE INDEX IF NOT EXISTS idx_email_notif_student_id ON public.email_notificati
 CREATE INDEX IF NOT EXISTS idx_email_notif_status     ON public.email_notifications(status)
   WHERE status IN ('queued','failed');
 
--- Auto-update updated_at
-CREATE TRIGGER trg_email_notif_updated_at
+-- Auto-update updated_at (CREATE OR REPLACE = retry-safe)
+CREATE OR REPLACE TRIGGER trg_email_notif_updated_at
   BEFORE UPDATE ON public.email_notifications
   FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
 

@@ -211,6 +211,15 @@ export default function Header() {
               <li>
                 <button
                   type="button"
+                  className={`nav-link ${staffView === 'analytics' ? 'active' : ''}`}
+                  onClick={() => setStaffView('analytics')}
+                >
+                  Analytics
+                </button>
+              </li>
+              <li>
+                <button
+                  type="button"
                   className={`nav-link ${staffView === 'menu' ? 'active' : ''}`}
                   onClick={() => setStaffView('menu')}
                 >

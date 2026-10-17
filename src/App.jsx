@@ -6,6 +6,7 @@ import Cart from './components/Cart.jsx';
 import OrdersPage from './components/OrdersPage.jsx';
 import StaffOrders from './components/StaffOrders.jsx';
 import DemandDashboard from './components/DemandDashboard.jsx';
+import AnalyticsDashboard from './components/AnalyticsDashboard.jsx';
 import MenuManagement from './components/MenuManagement.jsx';
 import AuthPage from './components/AuthPage.jsx';
 import ToastContainer from './components/Toast.jsx';
@@ -75,9 +76,10 @@ function MainContent() {
 
       {(role === 'staff' || role === 'admin') && (
         <>
-          {staffView === 'orders' && <StaffOrders />}
-          {staffView === 'demand' && <DemandDashboard />}
-          {staffView === 'menu'   && <MenuManagement />}
+          {staffView === 'orders'    && <StaffOrders />}
+          {staffView === 'demand'    && <DemandDashboard />}
+          {staffView === 'analytics' && <AnalyticsDashboard />}
+          {staffView === 'menu'      && <MenuManagement />}
         </>
       )}
     </main>

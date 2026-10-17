@@ -15,6 +15,10 @@ function dbOrderToFrontend(row) {
     token:          row.token,
     dateKey:        row.business_date,        // YYYY-MM-DD
     status:         row.status,
+    // Payment fields (migration 005)
+    paymentStatus:  row.payment_status || 'not_required',
+    paymentMethod:  row.payment_method || null,
+    confirmedAt:    row.confirmed_at   || null,
     totalAmount:    Math.round((row.total_paise || 0) / 100),   // paise -> rupees
     subtotalAmount: Math.round((row.subtotal_paise || 0) / 100),
     note:           row.student_note || '',

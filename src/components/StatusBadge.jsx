@@ -2,16 +2,28 @@ import React from 'react';
 
 /**
  * Accessible Status Badge conveying state with both text and distinct color tokens.
- * Statuses: Placed, Preparing, Ready, Collected, Expired
+ * Statuses: PendingPayment, Placed, Confirmed, Preparing, Ready, Collected, Expired, Cancelled
  */
 export default function StatusBadge({ status }) {
   const getBadgeConfig = (st) => {
     switch (st) {
+      case 'PendingPayment':
+        return {
+          label: 'Awaiting Payment',
+          className: 'badge-pending-payment',
+          dotChar: '⏳'
+        };
       case 'Placed':
         return {
           label: 'Placed',
           className: 'badge-placed',
           dotChar: '●'
+        };
+      case 'Confirmed':
+        return {
+          label: 'Confirmed',
+          className: 'badge-confirmed',
+          dotChar: '✓'
         };
       case 'Preparing':
         return {
@@ -21,7 +33,7 @@ export default function StatusBadge({ status }) {
         };
       case 'Ready':
         return {
-          label: 'Ready',
+          label: 'Ready for Pickup',
           className: 'badge-ready',
           dotChar: '✓'
         };
